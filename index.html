@@ -67,6 +67,9 @@ input[type=color]{width:44px;height:44px;margin:0;padding:2px;border-radius:50%;
 .swb.auto{width:auto;padding:0 16px;border-radius:999px;background:var(--bg);color:var(--text);font-size:14px;font-weight:600}
 .swb.sel,input[type=color].sel{box-shadow:0 0 0 3px var(--card),0 0 0 6px var(--text)}
 .err{color:var(--red)}
+.btnrow{display:flex;flex-wrap:wrap;gap:10px}
+.go.ghost{background:transparent;color:var(--accent);border:1.5px solid var(--accent)}
+.reply.off{display:flex;align-items:center;justify-content:space-between;gap:10px}
 .ask .step{display:flex;align-items:center;gap:6px}
 .ask button.nudge{width:40px;padding:11px 0;background:transparent;color:var(--ink);border:1.5px solid currentColor;border-radius:999px;font-size:18px;line-height:1}
 .ask button:disabled{opacity:.4;cursor:default}
@@ -120,14 +123,14 @@ setTimeout(function(){if(!window.__hsReady)show("The app didn’t start. If you�
   <div class="card" id="adminCard" hidden>
     <div class="label">Admin: channel color</div>
     <div class="sws" id="sws"></div>
-    <div class="hint">Changes the color for everyone in this channel, right away. “Auto” goes back to each person’s own status color.</div>
+    <div class="hint">Changes the color for everyone in this channel, right away. While Admin is on, setting your own status also sets the channel color to match it. “Auto” goes back to each person’s own status color.</div>
     <div class="hint err" id="admErr" hidden></div>
   </div>
   <div class="card">
     <div class="label">My status</div>
     <div class="chips" id="chips"></div>
     <input id="noteIn" placeholder="Note (optional), e.g. back at 3pm" maxlength="60">
-    <button class="go" id="setBtn">Set status</button>
+    <div class="btnrow"><button class="go" id="setBtn">Set status</button><button class="go ghost" id="offBtn">🌙 Off For Day!</button></div>
     <div class="hint">Pick a status, add a note if you like, then press Set status or Enter.</div>
   </div>
   <div class="card">
@@ -162,6 +165,11 @@ const rid=p=>p+Date.now().toString(36)+Math.random().toString(36).slice(2,6);
 const get=k=>{try{return localStorage.getItem(k)||""}catch(e){return ""}};
 const put=(k,v)=>{try{localStorage.setItem(k,v)}catch(e){}};
 const HEX=/^#[0-9a-f]{6}$/i;
+const COLOR_OK=v=>HEX.test(v||"")||/^status:(free|meeting|call|off)$/.test(v||"");
+const colorDot=v=>HEX.test(v||"")?v:(/^status:/.test(v||"")?S(v.slice(7)).c:"");
+const disList=()=>{try{const a=JSON.parse(get("hs_dis")||"[]");return Array.isArray(a)?a:[]}catch(e){return[]}};
+const dismissed=id=>disList().includes(id);
+const dismiss=id=>put("hs_dis",JSON.stringify([...disList(),id].slice(-60)));
 const MIN_CODE=4, PAGE=10, META="_channel"; /* channel name + color live in this doc inside the existing status collection */
 const PRESETS=[["","Auto"],["#b4456b","Rose"],["#1f8a63","Green"],["#d98a0b","Amber"],["#2c6bd6","Blue"],["#7a52c7","Purple"],["#1b8aa0","Teal"],["#5b6773","Slate"]];
 
@@ -230,8 +238,9 @@ else{
  /* ---------- theme: channel color if one is set, otherwise the per-status colors ---------- */
  function applyColor(){const r=document.documentElement;
   if(HEX.test(chanColor)){const v=themeVars(chanColor);delete r.dataset.status;THEME_KEYS.forEach(k=>r.style.setProperty(k,v[k]))}
+  else if(/^status:/.test(chanColor)){THEME_KEYS.forEach(k=>r.style.removeProperty(k));r.dataset.status=norm(chanColor.slice(7))}
   else{THEME_KEYS.forEach(k=>r.style.removeProperty(k));applyTheme()}}
- function applyTheme(){if(HEX.test(chanColor))return;document.documentElement.dataset.status=norm(mine.status||"free")}
+ function applyTheme(){if(chanColor)return;document.documentElement.dataset.status=norm(mine.status||"free")}
 
  /* ---------- channels page ---------- */
  function renderChans(){const l=$("chList");l.textContent="";const e=$("chEdit");
@@ -239,7 +248,7 @@ else{
   if(!chans.length){l.innerHTML='<div class="note">No channels yet. Make one to get started.</div>';return}
   chans.forEach(c=>{const r=document.createElement("div");r.className="chan";
    const b=document.createElement("button");b.className="open";b.disabled=editChans;
-   const sw=document.createElement("span");sw.className="sw";if(HEX.test(c.color||""))sw.style.background=c.color;
+   const sw=document.createElement("span");sw.className="sw";if(colorDot(c.color))sw.style.background=colorDot(c.color);
    const t=document.createElement("span");t.textContent=c.title||c.code;b.append(sw,t);b.onclick=()=>openChan(c,false);r.appendChild(b);
    if(editChans){const x=document.createElement("button");x.className="rm";x.textContent="Remove";x.setAttribute("aria-label","Remove "+(c.title||c.code));
     x.onclick=()=>{if(!confirm("Remove “"+(c.title||c.code)+"” from your channels? You can rejoin any time with its code."))return;
@@ -270,7 +279,7 @@ else{
   const b=$("createBtn");b.disabled=true;
   try{
    let title=formMode==="new"?nm:"",color="";
-   try{const s=await getDoc(doc(db,"houses",code,"status",META));if(s.exists()){title=s.data().name||title;color=HEX.test(s.data().color||"")?s.data().color:""}}catch(e){}
+   try{const s=await getDoc(doc(db,"houses",code,"status",META));if(s.exists()){title=s.data().name||title;color=COLOR_OK(s.data().color)?s.data().color:""}}catch(e){}
    let c=chans.find(x=>x.code===code);
    if(c){c.you=you;if(title)c.title=title;c.color=color||c.color||""}
    else{c={code,title:title||code,color,you};chans.push(c)}
@@ -285,7 +294,7 @@ else{
   editPeople=false;chanColor="";rejoin=false;metaMade=false;
   $("noteIn").value="";$("inbox").textContent="";$("list").innerHTML='<div class="note">Loading…</div>';$("feed").innerHTML='<div class="note">Loading…</div>';$("adminCard").hidden=true}
 
- function openChan(c,rj){leaveChan();cur=c;house=c.code;name=c.you;me=slug(name);rejoin=!!rj;chanColor=HEX.test(c.color||"")?c.color:"";
+ function openChan(c,rj){leaveChan();cur=c;house=c.code;name=c.you;me=slug(name);rejoin=!!rj;chanColor=COLOR_OK(c.color)?c.color:"";
   $("channels").hidden=true;$("app").hidden=false;$("bar").hidden=false;$("title").textContent=c.title||c.code;
   applyColor();renderAdmin();start()}
 
@@ -330,7 +339,11 @@ else{
    a.append(t,bt);box.appendChild(a)});
   knocks.filter(k=>k.d.from===me&&k.d.status!=="pending"&&k.d.respondedAt&&now-k.d.respondedAt<6e5).forEach(k=>{
    const r=document.createElement("div");r.className="reply";
-   r.textContent=(k.d.toName||"They")+" "+({come:"said come in",wait:"needs about "+(k.d.mins||5)+" minutes",no:"can’t right now"}[k.d.status]||"replied");box.appendChild(r)})}
+   r.textContent=(k.d.toName||"They")+" "+({come:"said come in",wait:"needs about "+(k.d.mins||5)+" minutes",no:"can’t right now"}[k.d.status]||"replied");box.appendChild(r)});
+  const today=new Date().toDateString();
+  knocks.filter(k=>k.d.kind==="off"&&k.d.from!==me&&!dismissed(k.id)&&new Date(k.d.at).toDateString()===today).sort((a,b)=>a.d.at-b.d.at).forEach(k=>{
+   const r=document.createElement("div");r.className="reply off";const t=document.createElement("span");t.textContent="🌙 "+(k.d.fromName||"Someone")+" is off for the day!";
+   const ok=document.createElement("button");ok.className="mini";ok.textContent="Got it";ok.onclick=()=>{dismiss(k.id);renderInbox()};r.append(t,ok);box.appendChild(r)})}
 
  /* feed: show 10, "Show more" adds 10 each time (we ask Firestore for one extra to know if more exist) */
  function renderFeed(){const f=$("feed");f.textContent="";
@@ -359,29 +372,39 @@ else{
   c.onchange=()=>{setColorLocal(c.value);pushColor(c.value);post("changed the channel color")};box.appendChild(c)}
  function updateSwatches(){const box=$("sws"),cc=(chanColor||"").toLowerCase();let hit=false;
   box.querySelectorAll(".swb").forEach(x=>{const on=(x.dataset.hex||"").toLowerCase()===cc;if(on)hit=true;x.classList.toggle("sel",on)});
-  const c=$("customColor");if(c){c.classList.toggle("sel",!!cc&&!hit);if(cc&&document.activeElement!==c)c.value=cc}}
+  const c=$("customColor");if(c){c.classList.toggle("sel",HEX.test(cc)&&!hit);if(HEX.test(cc)&&document.activeElement!==c)c.value=cc}}
  const setColorLocal=hex=>{chanColor=hex;if(cur)cur.color=hex;applyColor();updateSwatches()};
+ const syncColor=st=>{const v="status:"+st;setColorLocal(v);pushColor(v)};
  /* write at most ~4 times a second while dragging the picker, always ending on the final value */
  function pushColor(hex){clearTimeout(colorTimer);const e=$("admErr"),w=()=>{lastW=Date.now();setDoc(dref("status",META),{color:hex},{merge:true}).then(()=>{e.hidden=true}).catch(err=>{e.textContent="Couldn’t save the color for everyone ("+((err&&err.code)||"error")+"). Your Firestore rules are probably blocking it, so other people won’t see the change yet.";e.hidden=false})},gap=Date.now()-lastW;
   if(gap>250)w();else colorTimer=setTimeout(w,250-gap)}
 
- const notifyAsk=()=>{try{if(document.hidden&&"Notification" in window&&Notification.permission==="granted"){const k=knocks.filter(x=>x.d.to===me&&x.d.status==="pending").sort((a,b)=>a.d.at-b.d.at).pop();new Notification((k?k.d.fromName:"Someone")+" is asking for a moment",{body:"Open the app to reply."})}}catch(e){}};
+ const notifyAsk=(title,body)=>{try{if(document.hidden&&"Notification" in window&&Notification.permission==="granted")new Notification(title,body?{body}:{})}catch(e){}};
 
  function start(){
   wireFoot();renderChips();
   const commit=()=>{const st=norm(pending||mine.status||"free"),note=$("noteIn").value.trim();
+   if(mine.admin&&chanColor!=="status:"+st)syncColor(st);
    const ch=st!==norm(mine.status||""),nc=note!==(mine.note||"");if(!ch&&!nc&&mine.status)return;
    save({status:st,note});
    if(ch||!mine.status)post("is now "+S(st).t.toLowerCase()+(note?": “"+note+"”":""));
    else post(note?"updated their note: “"+note+"”":"cleared their note");
    pending="";renderChips();const b=$("setBtn");b.textContent="Set ✓";setTimeout(()=>b.textContent="Set status",1500)};
   $("setBtn").onclick=commit;
+  /* Off For Day!: sets you to Off and alerts everyone else in the channel */
+  const offForDay=()=>{if(!confirm("Tell everyone you’re off for the day?"))return;
+   const note=$("noteIn").value.trim();pending="";
+   if(mine.admin&&chanColor!=="status:off")syncColor("off");
+   save({status:"off",note});post("is off for the day!");
+   setDoc(dref("knocks",rid("k")),{kind:"off",to:"all",toName:"everyone",from:me,fromName:name,at:Date.now(),status:"sent"}).catch(()=>{});
+   renderChips();const b=$("offBtn");b.textContent="Sent ✓";setTimeout(()=>b.textContent="🌙 Off For Day!",2000)};
+  $("offBtn").onclick=offForDay;
   $("noteIn").onkeydown=e=>{if(e.key==="Enter"){e.preventDefault();commit()}};
 
   /* channel name + color, shared by everyone in the channel */
   unsubs.push(onSnapshot(dref("status",META),s=>{
    if(!s.exists()){if(!s.metadata.fromCache&&!metaMade){metaMade=true;setDoc(dref("status",META),{name:cur.title||house,color:chanColor||"",createdAt:Date.now()},{merge:true}).catch(()=>{})}return}
-   const d=s.data();chanColor=HEX.test(d.color||"")?d.color:"";
+   const d=s.data();chanColor=COLOR_OK(d.color)?d.color:"";
    if(d.name&&d.name!==cur.title){cur.title=d.name;$("title").textContent=d.name}
    cur.color=chanColor;saveChans();applyColor();updateSwatches()},()=>{}));
 
@@ -397,8 +420,10 @@ else{
 
   unsubs.push(onSnapshot(col("knocks"),snap=>{
    knocks=snap.docs.map(d=>({id:d.id,d:d.data()}));
-   if(!first&&snap.docChanges().some(c=>c.type==="added"&&c.doc.data().to===me&&c.doc.data().status==="pending")){
-    chime();try{navigator.vibrate&&navigator.vibrate([200,100,200])}catch(e){}notifyAsk();const t=document.title;document.title="🔔 Someone’s asking";setTimeout(()=>document.title=t,8000)}
+   const alerts=snap.docChanges().filter(c=>c.type==="added").map(c=>c.doc.data()).filter(d=>(d.to===me&&d.status==="pending")||(d.kind==="off"&&d.from!==me));
+   if(!first&&alerts.length){
+    const a=alerts[alerts.length-1],off=a.kind==="off",msg=(a.fromName||"Someone")+(off?" is off for the day!":" is asking for a moment");
+    chime();try{navigator.vibrate&&navigator.vibrate([200,100,200])}catch(e){}notifyAsk(msg,off?"":"Open the app to reply.");const t=document.title;document.title="🔔 "+msg;setTimeout(()=>document.title=t,8000)}
    first=false;renderInbox();renderList(lastDocs.slice())},()=>{}));
 
   subFeed();
