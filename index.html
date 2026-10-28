@@ -66,6 +66,10 @@ input[type=color]{width:44px;height:44px;margin:0;padding:2px;border-radius:50%;
 .swb{width:40px;height:40px;border-radius:50%;border:0;box-shadow:0 0 0 1.5px var(--line) inset;flex:none}
 .swb.auto{width:auto;padding:0 16px;border-radius:999px;background:var(--bg);color:var(--text);font-size:14px;font-weight:600}
 .swb.sel,input[type=color].sel{box-shadow:0 0 0 3px var(--card),0 0 0 6px var(--text)}
+.err{color:var(--red)}
+.ask .step{display:flex;align-items:center;gap:6px}
+.ask button.nudge{width:40px;padding:11px 0;background:transparent;color:var(--ink);border:1.5px solid currentColor;border-radius:999px;font-size:18px;line-height:1}
+.ask button:disabled{opacity:.4;cursor:default}
 .more{display:block;width:100%;margin-top:8px;background:var(--bg);color:var(--accent);border:0;border-radius:14px;padding:12px;font-size:15px;font-weight:600}
 .more:disabled{opacity:.6;cursor:default}
 :root[data-status="free"]{--page:linear-gradient(165deg,#e8fbf1,#c3eed8);--bg:#d3f1e2;--card:#f8fffb;--text:#12332a;--mute:#4b7366;--line:#bfe6d3;--accent:#1f8a63;--ink:#fff;--shadow:0 1px 2px rgba(20,80,55,.08),0 8px 20px rgba(20,80,55,.08)}
@@ -117,6 +121,7 @@ setTimeout(function(){if(!window.__hsReady)show("The app didn’t start. If you�
     <div class="label">Admin: channel color</div>
     <div class="sws" id="sws"></div>
     <div class="hint">Changes the color for everyone in this channel, right away. “Auto” goes back to each person’s own status color.</div>
+    <div class="hint err" id="admErr" hidden></div>
   </div>
   <div class="card">
     <div class="label">My status</div>
@@ -157,15 +162,23 @@ const rid=p=>p+Date.now().toString(36)+Math.random().toString(36).slice(2,6);
 const get=k=>{try{return localStorage.getItem(k)||""}catch(e){return ""}};
 const put=(k,v)=>{try{localStorage.setItem(k,v)}catch(e){}};
 const HEX=/^#[0-9a-f]{6}$/i;
-const MIN_CODE=4, PAGE=10;
+const MIN_CODE=4, PAGE=10, META="_channel"; /* channel name + color live in this doc inside the existing status collection */
 const PRESETS=[["","Auto"],["#b4456b","Rose"],["#1f8a63","Green"],["#d98a0b","Amber"],["#2c6bd6","Blue"],["#7a52c7","Purple"],["#1b8aa0","Teal"],["#5b6773","Slate"]];
 
-let actx;const unlock=()=>{try{actx=actx||new (window.AudioContext||window.webkitAudioContext)();if(actx.state==="suspended")actx.resume()}catch(e){}};
-document.addEventListener("pointerdown",unlock);
+let actx;
+const ensureCtx=()=>{try{actx=actx||new (window.AudioContext||window.webkitAudioContext)();return actx}catch(e){return null}};
+/* iOS puts the audio engine to sleep ("suspended" or "interrupted") whenever the app is backgrounded, so wake it on every tap */
+const unlock=()=>{const c=ensureCtx();if(!c)return;
+ try{if(c.state!=="running"){const p=c.resume();if(p&&p.catch)p.catch(()=>{})}
+  const s=c.createBufferSource();s.buffer=c.createBuffer(1,1,22050);s.connect(c.destination);s.start(0)}catch(e){}};
+["pointerdown","touchend","click","keydown"].forEach(ev=>document.addEventListener(ev,unlock,{passive:true}));
+document.addEventListener("visibilitychange",()=>{if(!document.hidden&&actx&&actx.state!=="running"){try{const p=actx.resume();if(p&&p.catch)p.catch(()=>{})}catch(e){}}});
 const soundOn=()=>get("hs_sound")!=="off";
-function chime(){if(!soundOn()||!actx)return;try{[[880,0],[1175,.18],[880,.42]].forEach(([f,t])=>{const o=actx.createOscillator(),g=actx.createGain();o.type="sine";o.frequency.value=f;
- g.gain.setValueAtTime(0,actx.currentTime+t);g.gain.linearRampToValueAtTime(.25,actx.currentTime+t+.02);g.gain.exponentialRampToValueAtTime(.001,actx.currentTime+t+.4);
- o.connect(g);g.connect(actx.destination);o.start(actx.currentTime+t);o.stop(actx.currentTime+t+.45)})}catch(e){}}
+function chime(){if(!soundOn())return;const c=ensureCtx();if(!c)return;
+ const play=()=>{try{[[880,0],[1175,.18],[880,.42]].forEach(([f,t])=>{const o=c.createOscillator(),g=c.createGain();o.type="sine";o.frequency.value=f;
+  g.gain.setValueAtTime(0,c.currentTime+t);g.gain.linearRampToValueAtTime(.25,c.currentTime+t+.02);g.gain.exponentialRampToValueAtTime(.001,c.currentTime+t+.4);
+  o.connect(g);g.connect(c.destination);o.start(c.currentTime+t);o.stop(c.currentTime+t+.45)})}catch(e){}};
+ if(c.state==="running")play();else{try{c.resume().then(play,play)}catch(e){play()}}}
 function wireFoot(){const sb=$("sndBtn"),nb=$("ntfBtn");const paint=()=>{sb.textContent=soundOn()?"Sound on":"Sound off"};paint();
  sb.onclick=()=>{put("hs_sound",soundOn()?"off":"on");unlock();paint();if(soundOn())chime()};
  if(!("Notification" in window)||Notification.permission==="granted")nb.hidden=true;
@@ -196,7 +209,7 @@ else{
  const saveChans=()=>put("hs_channels",JSON.stringify(chans));
 
  let cur=null,house="",name="",me="",mine={},knocks=[],first=true,unsubs=[],feedUnsub=null,tick=0,pending="",
-     feedN=PAGE,feedMore=false,lastDocs=[],lastFeed=[],editPeople=false,chanColor="",rejoin=false,metaMade=false,colorTimer=0,lastW=0;
+     feedN=PAGE,feedMore=false,lastDocs=[],lastFeed=[],editPeople=false,chanColor="",rejoin=false,metaMade=false,colorTimer=0,lastW=0,waitMins={};
 
  const col=c=>collection(db,"houses",house,c);
  const dref=(c,id)=>doc(db,"houses",house,c,id);
@@ -209,8 +222,8 @@ else{
  const save=patch=>{mine={...mine,...patch,name,updatedAt:Date.now()};setDoc(dref("status",me),mine).catch(()=>{})};
  const post=text=>setDoc(dref("feed",rid("f")),{name,text,at:Date.now()}).catch(()=>{});
  const knock=(toId,toName)=>{setDoc(dref("knocks",rid("k")),{to:toId,toName,from:me,fromName:name,at:Date.now(),status:"pending"}).catch(()=>{});post("asked "+toName+" for a moment")};
- const respond=(k,status)=>{setDoc(dref("knocks",k.id),{...k.d,status,respondedAt:Date.now()}).catch(()=>{});
-  post("replied to "+k.d.fromName+": "+{come:"come in",wait:"give me 5 min",no:"not now"}[status])};
+ const respond=(k,status,mins)=>{setDoc(dref("knocks",k.id),{...k.d,status,mins:mins||null,respondedAt:Date.now()}).catch(()=>{});
+  post("replied to "+k.d.fromName+": "+(status==="wait"?"give me "+mins+" min":{come:"come in",no:"not now"}[status]))};
  const removePerson=(id,d)=>{const n=d.name||"this person";if(!confirm("Remove "+n+" from this channel?"))return;
   setDoc(dref("status",id),{name:d.name||"",removed:true,removedAt:Date.now()}).catch(()=>{});post("removed "+n+" from the channel")};
 
@@ -257,7 +270,7 @@ else{
   const b=$("createBtn");b.disabled=true;
   try{
    let title=formMode==="new"?nm:"",color="";
-   try{const s=await getDoc(doc(db,"houses",code,"meta","channel"));if(s.exists()){title=s.data().name||title;color=HEX.test(s.data().color||"")?s.data().color:""}}catch(e){}
+   try{const s=await getDoc(doc(db,"houses",code,"status",META));if(s.exists()){title=s.data().name||title;color=HEX.test(s.data().color||"")?s.data().color:""}}catch(e){}
    let c=chans.find(x=>x.code===code);
    if(c){c.you=you;if(title)c.title=title;c.color=color||c.color||""}
    else{c={code,title:title||code,color,you};chans.push(c)}
@@ -284,7 +297,7 @@ else{
 
  const isPending=id=>knocks.some(k=>k.d.from===me&&k.d.to===id&&k.d.status==="pending"&&Date.now()-k.d.at<72e5);
 
- function renderList(docs){const l=$("list");l.textContent="";docs=docs.filter(x=>!x.d.removed);
+ function renderList(docs){const l=$("list");l.textContent="";docs=docs.filter(x=>!x.d.removed&&x.id!==META);
   const others=docs.some(x=>x.id!==me);if(!others)editPeople=false;
   const pe=$("pplEdit");pe.hidden=!others;pe.textContent=editPeople?"Done":"Edit";pe.classList.toggle("on",editPeople);
   if(!docs.length){l.innerHTML='<div class="note">No one has checked in yet.</div>';return}
@@ -307,12 +320,17 @@ else{
   knocks.filter(k=>k.d.to===me&&k.d.status==="pending"&&now-k.d.at<72e5).forEach(k=>{
    const a=document.createElement("div");a.className="ask";const t=document.createElement("b");
    t.textContent=(k.d.fromName||"Someone")+" would like a moment with you";const bt=document.createElement("div");bt.className="btns";
-   [["come","Come in",0],["wait","Give me 5 min",1],["no","Not now",1]].forEach(([s,l,alt])=>{
-    const b=document.createElement("button");b.textContent=l;if(alt)b.className="alt";b.onclick=()=>respond(k,s);bt.appendChild(b)});
+   const mk=(label,cls,fn)=>{const b=document.createElement("button");b.textContent=label;if(cls)b.className=cls;b.onclick=fn;return b};
+   const m=waitMins[k.id]||5,set=v=>{waitMins[k.id]=Math.max(5,Math.min(120,v));renderInbox()};
+   const step=document.createElement("div");step.className="step";
+   const dn=mk("−","nudge",()=>set(m-5)),up=mk("+","nudge",()=>set(m+5));
+   dn.setAttribute("aria-label","5 minutes less");up.setAttribute("aria-label","5 minutes more");dn.disabled=m<=5;up.disabled=m>=120;
+   step.append(dn,mk("Give me "+m+" min","alt",()=>respond(k,"wait",m)),up);
+   bt.append(mk("Come in","",()=>respond(k,"come")),step,mk("Not now","alt",()=>respond(k,"no")));
    a.append(t,bt);box.appendChild(a)});
   knocks.filter(k=>k.d.from===me&&k.d.status!=="pending"&&k.d.respondedAt&&now-k.d.respondedAt<6e5).forEach(k=>{
    const r=document.createElement("div");r.className="reply";
-   r.textContent=(k.d.toName||"They")+" "+({come:"said come in",wait:"needs about 5 minutes",no:"can’t right now"}[k.d.status]||"replied");box.appendChild(r)})}
+   r.textContent=(k.d.toName||"They")+" "+({come:"said come in",wait:"needs about "+(k.d.mins||5)+" minutes",no:"can’t right now"}[k.d.status]||"replied");box.appendChild(r)})}
 
  /* feed: show 10, "Show more" adds 10 each time (we ask Firestore for one extra to know if more exist) */
  function renderFeed(){const f=$("feed");f.textContent="";
@@ -344,7 +362,7 @@ else{
   const c=$("customColor");if(c){c.classList.toggle("sel",!!cc&&!hit);if(cc&&document.activeElement!==c)c.value=cc}}
  const setColorLocal=hex=>{chanColor=hex;if(cur)cur.color=hex;applyColor();updateSwatches()};
  /* write at most ~4 times a second while dragging the picker, always ending on the final value */
- function pushColor(hex){clearTimeout(colorTimer);const w=()=>{lastW=Date.now();setDoc(dref("meta","channel"),{color:hex},{merge:true}).catch(()=>{})},gap=Date.now()-lastW;
+ function pushColor(hex){clearTimeout(colorTimer);const e=$("admErr"),w=()=>{lastW=Date.now();setDoc(dref("status",META),{color:hex},{merge:true}).then(()=>{e.hidden=true}).catch(err=>{e.textContent="Couldn’t save the color for everyone ("+((err&&err.code)||"error")+"). Your Firestore rules are probably blocking it, so other people won’t see the change yet.";e.hidden=false})},gap=Date.now()-lastW;
   if(gap>250)w();else colorTimer=setTimeout(w,250-gap)}
 
  const notifyAsk=()=>{try{if(document.hidden&&"Notification" in window&&Notification.permission==="granted"){const k=knocks.filter(x=>x.d.to===me&&x.d.status==="pending").sort((a,b)=>a.d.at-b.d.at).pop();new Notification((k?k.d.fromName:"Someone")+" is asking for a moment",{body:"Open the app to reply."})}}catch(e){}};
@@ -361,8 +379,8 @@ else{
   $("noteIn").onkeydown=e=>{if(e.key==="Enter"){e.preventDefault();commit()}};
 
   /* channel name + color, shared by everyone in the channel */
-  unsubs.push(onSnapshot(dref("meta","channel"),s=>{
-   if(!s.exists()){if(!s.metadata.fromCache&&!metaMade){metaMade=true;setDoc(dref("meta","channel"),{name:cur.title||house,color:chanColor||"",createdAt:Date.now()},{merge:true}).catch(()=>{})}return}
+  unsubs.push(onSnapshot(dref("status",META),s=>{
+   if(!s.exists()){if(!s.metadata.fromCache&&!metaMade){metaMade=true;setDoc(dref("status",META),{name:cur.title||house,color:chanColor||"",createdAt:Date.now()},{merge:true}).catch(()=>{})}return}
    const d=s.data();chanColor=HEX.test(d.color||"")?d.color:"";
    if(d.name&&d.name!==cur.title){cur.title=d.name;$("title").textContent=d.name}
    cur.color=chanColor;saveChans();applyColor();updateSwatches()},()=>{}));
