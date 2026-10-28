@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1b6b86">
+<title>Household status</title>
+<style>
+:root{--bg:#f2f5f7;--card:#fff;--text:#14232b;--mute:#5d6f78;--line:#dce4e8;--accent:#1b6b86;
+--green:#2e9e5b;--red:#d64545;--amber:#d9992a;--blue:#3b7dd8;--purple:#8a5bd0;--gray:#8a9499}
+@media (prefers-color-scheme:dark){:root{--bg:#0f1a20;--card:#17262e;--text:#e9f0f3;--mute:#9bb0ba;--line:#26373f;--accent:#58b4d1}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:16px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+padding:max(16px,env(safe-area-inset-top)) 16px max(16px,env(safe-area-inset-bottom));max-width:560px;margin:0 auto}
+h1{font-size:24px;margin:6px 0 16px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;margin-bottom:12px}
+.label{font-size:13px;color:var(--mute);margin-bottom:8px;font-weight:600}
+.chips{display:flex;flex-wrap:wrap;gap:8px}
+button{font:inherit;cursor:pointer}
+button:focus-visible,input:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+.chip{border:1.5px solid var(--line);background:transparent;color:var(--text);border-radius:999px;padding:9px 14px;font-size:15px}
+.chip.on{color:#fff;border-color:transparent}
+input{width:100%;margin-top:10px;padding:11px 12px;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:var(--text);font:inherit}
+.go{margin-top:12px;background:var(--accent);color:#fff;border:0;border-radius:10px;padding:11px 18px;font-size:15px}
+.person{display:flex;align-items:center;gap:12px;padding:12px 0;border-top:1px solid var(--line)}
+.person:first-of-type{border-top:0}
+.dot{width:14px;height:14px;border-radius:50%;flex:none}
+.pname{font-weight:600}.pstat{font-size:14px;color:var(--mute)}
+.me{font-size:12px;color:var(--accent);margin-left:6px;font-weight:400}
+.ask-btn{margin-left:auto;border:1.5px solid var(--accent);color:var(--accent);background:transparent;border-radius:999px;padding:7px 12px;font-size:14px;flex:none}
+.ask-btn:disabled{opacity:.5;cursor:default}
+.ask{border:2px solid var(--accent);background:var(--card);border-radius:14px;padding:14px;margin-bottom:12px}
+.ask b{display:block;margin-bottom:8px}
+.btns{display:flex;flex-wrap:wrap;gap:8px}
+.ask button{border:0;border-radius:10px;padding:9px 13px;font-size:14px;background:var(--accent);color:#fff}
+.ask button.alt{background:transparent;color:var(--text);border:1px solid var(--line)}
+.reply{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px 14px;margin-bottom:12px}
+.fi{padding:9px 0;border-top:1px solid var(--line)}.fi:first-child{border-top:0}
+.fi small{display:block;color:var(--mute);font-size:12px;margin-top:2px}
+.note{color:var(--mute);font-size:14px;text-align:center;padding:8px}
+.link{background:none;border:0;color:var(--mute);font-size:13px;text-decoration:underline;padding:8px;display:block;margin:0 auto}
+[hidden]{display:none!important}
+</style>
+</head>
+<body>
+<h1>Household status</h1>
+<div id="setupMsg" class="card" hidden>Firebase isn’t set up yet. Paste your Firebase config into <code>index.html</code> (see the <code>firebaseConfig</code> block), then reload.</div>
+<div id="join" class="card" hidden>
+  <div class="label">Join your household</div>
+  <input id="houseIn" placeholder="House code (shared by your household)" maxlength="60" autocomplete="off">
+  <input id="nameIn" placeholder="Your name" maxlength="30">
+  <button class="go" id="joinBtn">Join</button>
+</div>
+<div id="app" hidden>
+  <div id="inbox"></div>
+  <div class="card">
+    <div class="label">My status</div>
+    <div class="chips" id="chips"></div>
+    <input id="noteIn" placeholder="Note (optional), e.g. back at 3pm" maxlength="60">
+  </div>
+  <div class="card"><div class="label">Everyone</div><div id="list"><div class="note">Loading…</div></div></div>
+  <div class="card"><div class="label">Recent changes</div><div id="feed"><div class="note">Loading…</div></div></div>
+  <button class="link" id="leave">Switch name or house</button>
+</div>
+
+<script type="module">
+import {initializeApp} from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
+import {getFirestore,collection,doc,setDoc,onSnapshot,query,orderBy,limit} from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+
+// 1) Paste your Firebase web app config here (Project settings > Your apps > Web app).
+const firebaseConfig = {
+  apiKey: "AIzaSyASRTEsWZVTSebZ8p4SCf0onDPDyY2cSjI",
+  authDomain: "family-hub-e2995.firebaseapp.com",
+  projectId: "family-hub-e2995",
+  storageBucket: "family-hub-e2995.firebasestorage.app",
+  messagingSenderId: "960242386059",
+  appId: "1:960242386059:web:48e1ec58eaf53c6286808e"
+};
+
+const $=id=>document.getElementById(id);
+const STATUSES=[
+ {k:"free",t:"Available",c:"var(--green)"},{k:"meeting",t:"In a meeting",c:"var(--red)"},
+ {k:"call",t:"On a call",c:"var(--red)"},{k:"focus",t:"Focused",c:"var(--amber)"},
+ {k:"out",t:"Out",c:"var(--blue)"},{k:"sleep",t:"Sleeping",c:"var(--purple)"}];
+const S=k=>STATUSES.find(s=>s.k===k)||{t:"No status",c:"var(--gray)"};
+const slug=n=>n.trim().toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"")||"x";
+const rid=p=>p+Date.now().toString(36)+Math.random().toString(36).slice(2,6);
+const get=k=>{try{return localStorage.getItem(k)||""}catch(e){return ""}};
+const put=(k,v)=>{try{localStorage.setItem(k,v)}catch(e){}};
+
+if(firebaseConfig.apiKey.startsWith("PASTE")){$("setupMsg").hidden=false}
+else{
+ const db=getFirestore(initializeApp(firebaseConfig));
+ let house=get("hs_house"),name=get("hs_name"),me,mine={},knocks=[],first=true,noteTimer,unsubs=[];
+
+ const col=c=>collection(db,"houses",house,c);
+ const dref=(c,id)=>doc(db,"houses",house,c,id);
+ const ago=ts=>{if(!ts)return"";const m=Math.round((Date.now()-ts)/6e4);if(m<1)return"just now";if(m<60)return m+"m ago";const h=Math.round(m/60);return h<24?h+"h ago":Math.round(h/24)+"d ago"};
+ const fmt=ts=>{if(!ts)return"";const d=new Date(ts),n=new Date(),t=d.toLocaleTimeString([],{hour:"numeric",minute:"2-digit"});
+  if(d.toDateString()===n.toDateString())return"Today "+t;
+  const y=new Date(n);y.setDate(n.getDate()-1);if(d.toDateString()===y.toDateString())return"Yesterday "+t;
+  return d.toLocaleDateString([],{month:"short",day:"numeric"})+" "+t};
+
+ const save=patch=>{mine={...mine,...patch,name,updatedAt:Date.now()};setDoc(dref("status",me),mine).catch(()=>{})};
+ const post=text=>setDoc(dref("feed",rid("f")),{name,text,at:Date.now()}).catch(()=>{});
+ const knock=(toId,toName)=>{setDoc(dref("knocks",rid("k")),{to:toId,toName,from:me,fromName:name,at:Date.now(),status:"pending"}).catch(()=>{});post("asked "+toName+" for a moment")};
+ const respond=(k,status)=>{setDoc(dref("knocks",k.id),{...k.d,status,respondedAt:Date.now()}).catch(()=>{});
+  post("replied to "+k.d.fromName+": "+{come:"come in",wait:"give me 5 min",no:"not now"}[status])};
+
+ function renderChips(){const b=$("chips");b.textContent="";
+  STATUSES.forEach(s=>{const x=document.createElement("button");x.className="chip"+(mine.status===s.k?" on":"");
+   x.textContent=s.t;if(mine.status===s.k)x.style.background=s.c;
+   x.onclick=()=>{const ch=mine.status!==s.k;save({status:s.k});if(ch)post("is now "+s.t.toLowerCase());renderChips()};b.appendChild(x)})}
+
+ const pending=id=>knocks.some(k=>k.d.from===me&&k.d.to===id&&k.d.status==="pending"&&Date.now()-k.d.at<72e5);
+
+ function renderList(docs){const l=$("list");l.textContent="";
+  if(!docs.length){l.innerHTML='<div class="note">No one has checked in yet.</div>';return}
+  docs.sort((a,b)=>(a.d.name||"").localeCompare(b.d.name||"")).forEach(({id,d})=>{
+   const s=S(d.status),r=document.createElement("div");r.className="person";
+   const dot=document.createElement("span");dot.className="dot";dot.style.background=s.c;
+   const w=document.createElement("div"),n=document.createElement("div");n.className="pname";n.textContent=d.name||"Someone";
+   if(id===me){const m=document.createElement("span");m.className="me";m.textContent="you";n.appendChild(m)}
+   const st=document.createElement("div");st.className="pstat";st.textContent=[s.t,d.note,ago(d.updatedAt)].filter(Boolean).join(" · ");
+   w.append(n,st);r.append(dot,w);
+   if(id!==me){const b=document.createElement("button"),sent=pending(id);b.className="ask-btn";b.textContent=sent?"Asked ✓":"🔔 Ask";b.disabled=sent;
+    b.onclick=()=>{b.disabled=true;b.textContent="Asked ✓";knock(id,d.name||"someone")};r.appendChild(b)}
+   l.appendChild(r)})}
+
+ function renderInbox(){const box=$("inbox");box.textContent="";const now=Date.now();
+  knocks.filter(k=>k.d.to===me&&k.d.status==="pending"&&now-k.d.at<72e5).forEach(k=>{
+   const a=document.createElement("div");a.className="ask";const t=document.createElement("b");
+   t.textContent=(k.d.fromName||"Someone")+" would like a moment with you";const bt=document.createElement("div");bt.className="btns";
+   [["come","Come in",0],["wait","Give me 5 min",1],["no","Not now",1]].forEach(([s,l,alt])=>{
+    const b=document.createElement("button");b.textContent=l;if(alt)b.className="alt";b.onclick=()=>respond(k,s);bt.appendChild(b)});
+   a.append(t,bt);box.appendChild(a)});
+  knocks.filter(k=>k.d.from===me&&k.d.status!=="pending"&&k.d.respondedAt&&now-k.d.respondedAt<6e5).forEach(k=>{
+   const r=document.createElement("div");r.className="reply";
+   r.textContent=(k.d.toName||"They")+" "+({come:"said come in",wait:"needs about 5 minutes",no:"can’t right now"}[k.d.status]||"replied");box.appendChild(r)})}
+
+ function renderFeed(items){const f=$("feed");f.textContent="";
+  if(!items.length){f.innerHTML='<div class="note">Nothing yet.</div>';return}
+  items.forEach(it=>{const d=document.createElement("div");d.className="fi";const b=document.createElement("b");b.textContent=it.name||"Someone";
+   d.append(b,document.createTextNode(" "+it.text));const s=document.createElement("small");s.textContent=fmt(it.at)+" · "+ago(it.at);d.appendChild(s);f.appendChild(d)})}
+
+ let lastDocs=[],lastFeed=[];
+ function start(){
+  me=slug(name);$("join").hidden=true;$("app").hidden=false;
+  $("noteIn").oninput=e=>{clearTimeout(noteTimer);const v=e.target.value;
+   noteTimer=setTimeout(()=>{if(v===(mine.note||""))return;save({note:v});post(v?"updated their note: “"+v+"”":"cleared their note")},1500)};
+  unsubs.push(onSnapshot(col("status"),snap=>{
+   lastDocs=snap.docs.map(d=>({id:d.id,d:d.data()}));const m=lastDocs.find(x=>x.id===me);
+   if(m&&!Object.keys(mine).length){mine=m.d;$("noteIn").value=mine.note||""}
+   if(!m&&!Object.keys(mine).length){save({status:"free"})}
+   renderChips();renderList(lastDocs.slice())},()=>{$("list").innerHTML='<div class="note">Couldn’t load. Check your Firebase rules and config.</div>'}));
+  unsubs.push(onSnapshot(col("knocks"),snap=>{
+   knocks=snap.docs.map(d=>({id:d.id,d:d.data()}));
+   if(!first&&snap.docChanges().some(c=>c.type==="added"&&c.doc.data().to===me&&c.doc.data().status==="pending")){
+    try{navigator.vibrate&&navigator.vibrate([200,100,200])}catch(e){}const t=document.title;document.title="🔔 Someone’s asking";setTimeout(()=>document.title=t,8000)}
+   first=false;renderInbox();renderList(lastDocs.slice())},()=>{}));
+  unsubs.push(onSnapshot(query(col("feed"),orderBy("at","desc"),limit(40)),snap=>{lastFeed=snap.docs.map(d=>d.data());renderFeed(lastFeed)},()=>{}));
+  setInterval(()=>{renderInbox();renderFeed(lastFeed)},3e4);
+ }
+
+ $("joinBtn").onclick=()=>{const h=$("houseIn").value.trim(),n=$("nameIn").value.trim();
+  if(h.length<8){alert("Use a house code with at least 8 characters.");return}if(!n)return;
+  put("hs_house",h);put("hs_name",n);house=h;name=n;start()};
+ $("leave").onclick=()=>{put("hs_house","");put("hs_name","");location.reload()};
+ if(house&&name)start();else $("join").hidden=false;
+}
+</script>
+</body>
+</html>
