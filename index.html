@@ -150,8 +150,11 @@ setTimeout(function(){if(!window.__hsReady)show("The app didn’t start. If you�
     <div id="list"><div class="note">Loading…</div></div>
   </div>
   <div class="card"><div class="label">Recent changes</div><div id="feed"><div class="note">Loading…</div></div></div>
-  <div class="foot"><button class="link" id="sndBtn"></button><button class="link" id="pushBtn" hidden>Turn on push</button></div>
+  <div class="foot"><button class="link" id="sndBtn"></button><button class="link" id="pushBtn" hidden>Turn on push</button><button class="link" id="diagBtn">Push check</button></div>
   <div class="hint" id="pushHelp" hidden style="text-align:center"></div>
+  <div class="card" id="diagCard" hidden style="margin-top:12px"><div class="label">Push check</div>
+    <pre id="diagTxt" style="white-space:pre-wrap;word-break:break-word;font:13px/1.55 ui-monospace,Menlo,monospace;margin:0;color:var(--text)"></pre>
+    <button class="go" id="testPush">Send me a test push</button></div>
 </div>
 
 <script type="module">
@@ -180,7 +183,7 @@ const put=(k,v)=>{try{localStorage.setItem(k,v)}catch(e){}};
 const uid=()=>{let u=get("hs_uid");if(!u){try{u="u"+Array.from(crypto.getRandomValues(new Uint8Array(12))).map(b=>b.toString(16).padStart(2,"0")).join("")}catch(e){u="u"+Math.random().toString(16).slice(2)+Date.now().toString(16)}put("hs_uid",u)}return u};
 const pushOn=()=>get("hs_push")==="on";
 const isIOS=()=>/iPad|iPhone|iPod/.test(navigator.userAgent)||(navigator.platform==="MacIntel"&&navigator.maxTouchPoints>1);
-const standalone=()=>navigator.standalone===true||matchMedia("(display-mode: standalone)").matches||matchMedia("(display-mode: fullscreen)").matches;
+const standalone=()=>{try{return navigator.standalone===true||matchMedia("(display-mode: standalone)").matches||matchMedia("(display-mode: fullscreen)").matches}catch(e){return false}};
 const RELAY_URL="https://household-push.b28sy2d2b8.workers.dev/"; /* push relay (Cloudflare Worker) */
 const HEX=/^#[0-9a-f]{6}$/i;
 const COLOR_OK=v=>HEX.test(v||"")||/^status:(free|meeting|call|off)$/.test(v||"");
@@ -248,7 +251,10 @@ else{
  const knock=(toId,toName)=>{setDoc(dref("knocks",rid("k")),{to:toId,toName,from:me,fromName:name,at:Date.now(),status:"pending"}).catch(()=>{});post("asked "+toName+" for a moment");ping("ask",toId)};
  const respond=(k,status,mins)=>{setDoc(dref("knocks",k.id),{...k.d,status,mins:mins||null,respondedAt:Date.now()}).catch(()=>{});
   post("replied to "+k.d.fromName+": "+(status==="wait"?"give me "+mins+" min":{come:"come in",no:"not now"}[status]));ping("reply",k.d.from,{status,mins:mins||0})};
- const ping=(kind,to,extra)=>{if(!RELAY_URL)return;try{fetch(RELAY_URL,{method:"POST",headers:{"Content-Type":"text/plain"},body:JSON.stringify({house,kind,from:me,fromName:name,to:to||"",...(extra||{})})}).catch(()=>{})}catch(e){}};
+ const ping=(kind,to,extra)=>{if(!RELAY_URL)return;const tag=(extra&&extra.test)?"test":kind,at=()=>new Date().toLocaleTimeString([],{hour:"numeric",minute:"2-digit",second:"2-digit"});
+  try{fetch(RELAY_URL,{method:"POST",headers:{"Content-Type":"text/plain"},body:JSON.stringify({house,kind,from:me,fromName:name,to:to||"",...(extra||{})})})
+   .then(r=>r.text().then(t=>{lastRelay=at()+" "+tag+": "+r.status+" "+t.slice(0,200);renderDiag()}))
+   .catch(e=>{lastRelay=at()+" "+tag+": couldn’t get an answer from the relay ("+((e&&e.message)||e)+")";renderDiag()})}catch(e){}};
  const removePerson=(id,d)=>{const n=d.name||"this person";if(!confirm("Remove "+n+" from this channel?"))return;
   setDoc(dref("status",id),{name:d.name||"",removed:true,removedAt:Date.now()}).catch(()=>{});post("removed "+n+" from the channel")};
 
@@ -399,7 +405,22 @@ else{
 
  /* ---------- OneSignal push: the button only appears where the device can do push ---------- */
  let osRef=null;
- function refreshPush(){const b=$("pushBtn"),h=$("pushHelp");h.hidden=true;
+ let lastRelay="",allowFg=0;
+ function renderDiag(){const c=$("diagCard");if(c.hidden)return;const o=osRef,L=[];
+  L.push("Home Screen app: "+(standalone()?"yes":"no (open it from the Home Screen icon)"));
+  L.push("Browser permission: "+(("Notification" in window)?Notification.permission:"n/a"));
+  L.push("OneSignal loaded: "+(o?"yes":"no"));
+  if(o){const g=f=>{try{return f()}catch(e){return "?"}};
+   L.push("OneSignal permission: "+g(()=>o.Notifications.permission?"allowed":"not allowed"));
+   L.push("Subscribed: "+g(()=>o.User.PushSubscription.optedIn?"yes":"no"));
+   L.push("Device registered: "+g(()=>o.User.PushSubscription.id?"yes":"no"));
+   L.push("Device ID set in OneSignal: "+g(()=>("externalId" in o.User)?(o.User.externalId===uid()?"yes":"no"):"unknown"))}
+  L.push("Push switched on in app: "+(pushOn()?"yes":"no"));
+  L.push("Saved in this channel: "+(mine.pushId&&mine.pushId===uid()?"yes":"no"));
+  L.push("Last relay answer: "+(lastRelay||"none yet"));
+  $("diagTxt").textContent=L.join("\n")}
+ function refreshPush(){refreshPush0();renderDiag()}
+ function refreshPush0(){const b=$("pushBtn"),h=$("pushHelp");h.hidden=true;
   if(isIOS()&&!standalone()){b.hidden=false;b.textContent="Get push alerts";
    b.onclick=()=>{h.textContent="To get push alerts on iPhone or iPad: tap Share, then Add to Home Screen, then open the new icon on your Home Screen and tap Turn on push there.";h.hidden=!h.hidden};return}
   if(!osRef||!osRef.Notifications.isPushSupported()){b.hidden=true;return}
@@ -413,7 +434,7 @@ else{
    refreshPush()}).catch(refreshPush)}
  function turnOffPush(){try{osRef.User.PushSubscription.optOut()}catch(e){}put("hs_push","off");refreshPush()}
  Promise.race([window.hsOS||Promise.resolve(null),new Promise(r=>setTimeout(()=>r(null),10000))]).then(o=>{osRef=o;if(!o)return;
-  try{o.Notifications.addEventListener("foregroundWillDisplay",e=>{if(document.visibilityState==="visible"){try{e.preventDefault()}catch(x){}}});
+  try{o.Notifications.addEventListener("foregroundWillDisplay",e=>{if(document.visibilityState==="visible"&&Date.now()>allowFg){try{e.preventDefault()}catch(x){}}});
    o.User.PushSubscription.addEventListener("change",()=>refreshPush())}catch(e){}
   if(pushOn())o.login(uid()).catch(()=>{});refreshPush()});
 
@@ -428,6 +449,8 @@ else{
    if(ch||!mine.status)post("is now "+S(st).t.toLowerCase()+(note?": “"+note+"”":""));
    else post(note?"updated their note: “"+note+"”":"cleared their note");
    pending="";renderChips();const b=$("setBtn");b.textContent="Set ✓";setTimeout(()=>b.textContent="Set status",1500)};
+  $("diagBtn").onclick=()=>{const c=$("diagCard");c.hidden=!c.hidden;renderDiag()};
+  $("testPush").onclick=()=>{allowFg=Date.now()+25000;lastRelay="sending…";renderDiag();ping("ask",me,{test:true})};
   $("setBtn").onclick=commit;
   /* Off For Day!: sets you to Off and alerts everyone else in the channel */
   const offForDay=()=>{if(!confirm("Tell everyone you’re off for the day?"))return;
@@ -454,7 +477,7 @@ else{
      showChannels("You were removed from “"+t+"”. If that was a mistake, rejoin with its code.");return}
    }else if(m){rejoin=false;mine=m.d;if(!$("noteIn").value&&mine.note)$("noteIn").value=mine.note;if(!mine.status)save({status:"free"});if(pushOn()&&m.d.pushId!==uid())setDoc(dref("status",me),{pushId:uid()},{merge:true}).catch(()=>{})}
    else if(!mine.status){save({status:"free"})}
-   renderChips();renderList(lastDocs.slice());renderAdmin()},()=>{$("list").innerHTML='<div class="note">Couldn’t load. Check your Firebase security rules.</div>'}));
+   renderChips();renderList(lastDocs.slice());renderAdmin();renderDiag()},()=>{$("list").innerHTML='<div class="note">Couldn’t load. Check your Firebase security rules.</div>'}));
 
   unsubs.push(onSnapshot(col("knocks"),snap=>{
    knocks=snap.docs.map(d=>({id:d.id,d:d.data()}));
