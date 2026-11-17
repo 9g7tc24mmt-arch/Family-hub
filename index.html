@@ -181,7 +181,7 @@ const uid=()=>{let u=get("hs_uid");if(!u){try{u="u"+Array.from(crypto.getRandomV
 const pushOn=()=>get("hs_push")==="on";
 const isIOS=()=>/iPad|iPhone|iPod/.test(navigator.userAgent)||(navigator.platform==="MacIntel"&&navigator.maxTouchPoints>1);
 const standalone=()=>navigator.standalone===true||matchMedia("(display-mode: standalone)").matches||matchMedia("(display-mode: fullscreen)").matches;
-const RELAY_URL=""; /* paste the address of your push relay here once it is set up */
+const RELAY_URL="https://household-push.b28sy2d2b8.workers.dev/"; /* push relay (Cloudflare Worker) */
 const HEX=/^#[0-9a-f]{6}$/i;
 const COLOR_OK=v=>HEX.test(v||"")||/^status:(free|meeting|call|off)$/.test(v||"");
 const colorDot=v=>HEX.test(v||"")?v:(/^status:/.test(v||"")?S(v.slice(7)).c:"");
