@@ -1,0 +1,24 @@
+{
+  "name": "Household status",
+  "short_name": "Household",
+  "id": "/Family-hub/",
+  "start_url": "/Family-hub/",
+  "scope": "/Family-hub/",
+  "display": "standalone",
+  "background_color": "#f6f1ec",
+  "theme_color": "#1b6b86",
+  "icons": [
+    {
+      "src": "/Family-hub/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/Family-hub/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}

@@ -4,6 +4,18 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#1b6b86">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="apple-touch-icon-180.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Household">
+<script src="https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js" defer></script>
+<script>
+/* OneSignal push. hsOS resolves to the SDK once it has started (or null if it can't start). */
+window.OneSignalDeferred=window.OneSignalDeferred||[];
+window.hsOS=new Promise(function(resolve){OneSignalDeferred.push(async function(OneSignal){
+  try{await OneSignal.init({appId:"663a3e35-8f61-4084-9b7a-776f3b1a0e4e",serviceWorkerPath:"Family-hub/OneSignalSDKWorker.js",serviceWorkerParam:{scope:"/Family-hub/"},autoResubscribe:true});resolve(OneSignal)}
+  catch(e){resolve(null)}})});
+</script>
 <title>Household status</title>
 <style>
 :root{--bg:#f6f1ec;--card:#fffdfa;--text:#2b2220;--mute:#7a6b66;--line:#eadfd8;--accent:#b4456b;--ink:#fff;
@@ -138,7 +150,8 @@ setTimeout(function(){if(!window.__hsReady)show("The app didn’t start. If you�
     <div id="list"><div class="note">Loading…</div></div>
   </div>
   <div class="card"><div class="label">Recent changes</div><div id="feed"><div class="note">Loading…</div></div></div>
-  <div class="foot"><button class="link" id="sndBtn"></button><button class="link" id="ntfBtn">Turn on alerts</button></div>
+  <div class="foot"><button class="link" id="sndBtn"></button><button class="link" id="pushBtn" hidden>Turn on push</button></div>
+  <div class="hint" id="pushHelp" hidden style="text-align:center"></div>
 </div>
 
 <script type="module">
@@ -164,6 +177,11 @@ const slug=n=>n.trim().toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g
 const rid=p=>p+Date.now().toString(36)+Math.random().toString(36).slice(2,6);
 const get=k=>{try{return localStorage.getItem(k)||""}catch(e){return ""}};
 const put=(k,v)=>{try{localStorage.setItem(k,v)}catch(e){}};
+const uid=()=>{let u=get("hs_uid");if(!u){try{u="u"+Array.from(crypto.getRandomValues(new Uint8Array(12))).map(b=>b.toString(16).padStart(2,"0")).join("")}catch(e){u="u"+Math.random().toString(16).slice(2)+Date.now().toString(16)}put("hs_uid",u)}return u};
+const pushOn=()=>get("hs_push")==="on";
+const isIOS=()=>/iPad|iPhone|iPod/.test(navigator.userAgent)||(navigator.platform==="MacIntel"&&navigator.maxTouchPoints>1);
+const standalone=()=>navigator.standalone===true||matchMedia("(display-mode: standalone)").matches||matchMedia("(display-mode: fullscreen)").matches;
+const RELAY_URL=""; /* paste the address of your push relay here once it is set up */
 const HEX=/^#[0-9a-f]{6}$/i;
 const COLOR_OK=v=>HEX.test(v||"")||/^status:(free|meeting|call|off)$/.test(v||"");
 const colorDot=v=>HEX.test(v||"")?v:(/^status:/.test(v||"")?S(v.slice(7)).c:"");
@@ -187,10 +205,8 @@ function chime(){if(!soundOn())return;const c=ensureCtx();if(!c)return;
   g.gain.setValueAtTime(0,c.currentTime+t);g.gain.linearRampToValueAtTime(.25,c.currentTime+t+.02);g.gain.exponentialRampToValueAtTime(.001,c.currentTime+t+.4);
   o.connect(g);g.connect(c.destination);o.start(c.currentTime+t);o.stop(c.currentTime+t+.45)})}catch(e){}};
  if(c.state==="running")play();else{try{c.resume().then(play,play)}catch(e){play()}}}
-function wireFoot(){const sb=$("sndBtn"),nb=$("ntfBtn");const paint=()=>{sb.textContent=soundOn()?"Sound on":"Sound off"};paint();
- sb.onclick=()=>{put("hs_sound",soundOn()?"off":"on");unlock();paint();if(soundOn())chime()};
- if(!("Notification" in window)||Notification.permission==="granted")nb.hidden=true;
- nb.onclick=()=>{Notification.requestPermission().then(p=>{if(p==="granted")nb.hidden=true})}}
+function wireFoot(){const sb=$("sndBtn");const paint=()=>{sb.textContent=soundOn()?"Sound on":"Sound off"};paint();
+ sb.onclick=()=>{put("hs_sound",soundOn()?"off":"on");unlock();paint();if(soundOn())chime()}}
 
 /* ---------- channel color theme (derived from one hex so everyone sees the same thing) ---------- */
 const THEME_KEYS=["--page","--bg","--card","--text","--mute","--line","--accent","--ink","--shadow"];
@@ -227,11 +243,12 @@ else{
   const y=new Date(n);y.setDate(n.getDate()-1);if(d.toDateString()===y.toDateString())return"Yesterday "+t;
   return d.toLocaleDateString([],{month:"short",day:"numeric"})+" "+t};
 
- const save=patch=>{mine={...mine,...patch,name,updatedAt:Date.now()};setDoc(dref("status",me),mine).catch(()=>{})};
+ const save=patch=>{mine={...mine,...patch,name,updatedAt:Date.now()};if(pushOn())mine.pushId=uid();setDoc(dref("status",me),mine).catch(()=>{})};
  const post=text=>setDoc(dref("feed",rid("f")),{name,text,at:Date.now()}).catch(()=>{});
- const knock=(toId,toName)=>{setDoc(dref("knocks",rid("k")),{to:toId,toName,from:me,fromName:name,at:Date.now(),status:"pending"}).catch(()=>{});post("asked "+toName+" for a moment")};
+ const knock=(toId,toName)=>{setDoc(dref("knocks",rid("k")),{to:toId,toName,from:me,fromName:name,at:Date.now(),status:"pending"}).catch(()=>{});post("asked "+toName+" for a moment");ping("ask",toId)};
  const respond=(k,status,mins)=>{setDoc(dref("knocks",k.id),{...k.d,status,mins:mins||null,respondedAt:Date.now()}).catch(()=>{});
-  post("replied to "+k.d.fromName+": "+(status==="wait"?"give me "+mins+" min":{come:"come in",no:"not now"}[status]))};
+  post("replied to "+k.d.fromName+": "+(status==="wait"?"give me "+mins+" min":{come:"come in",no:"not now"}[status]));ping("reply",k.d.from,{status,mins:mins||0})};
+ const ping=(kind,to,extra)=>{if(!RELAY_URL)return;try{fetch(RELAY_URL,{method:"POST",headers:{"Content-Type":"text/plain"},body:JSON.stringify({house,kind,from:me,fromName:name,to:to||"",...(extra||{})})}).catch(()=>{})}catch(e){}};
  const removePerson=(id,d)=>{const n=d.name||"this person";if(!confirm("Remove "+n+" from this channel?"))return;
   setDoc(dref("status",id),{name:d.name||"",removed:true,removedAt:Date.now()}).catch(()=>{});post("removed "+n+" from the channel")};
 
@@ -379,10 +396,31 @@ else{
  function pushColor(hex){clearTimeout(colorTimer);const e=$("admErr"),w=()=>{lastW=Date.now();setDoc(dref("status",META),{color:hex},{merge:true}).then(()=>{e.hidden=true}).catch(err=>{e.textContent="Couldn’t save the color for everyone ("+((err&&err.code)||"error")+"). Your Firestore rules are probably blocking it, so other people won’t see the change yet.";e.hidden=false})},gap=Date.now()-lastW;
   if(gap>250)w();else colorTimer=setTimeout(w,250-gap)}
 
- const notifyAsk=(title,body)=>{try{if(document.hidden&&"Notification" in window&&Notification.permission==="granted")new Notification(title,body?{body}:{})}catch(e){}};
+
+ /* ---------- OneSignal push: the button only appears where the device can do push ---------- */
+ let osRef=null;
+ function refreshPush(){const b=$("pushBtn"),h=$("pushHelp");h.hidden=true;
+  if(isIOS()&&!standalone()){b.hidden=false;b.textContent="Get push alerts";
+   b.onclick=()=>{h.textContent="To get push alerts on iPhone or iPad: tap Share, then Add to Home Screen, then open the new icon on your Home Screen and tap Turn on push there.";h.hidden=!h.hidden};return}
+  if(!osRef||!osRef.Notifications.isPushSupported()){b.hidden=true;return}
+  const on=pushOn()&&osRef.User.PushSubscription.optedIn;
+  b.hidden=false;b.textContent=on?"Push on ✓":"Turn on push";b.onclick=on?turnOffPush:turnOnPush}
+ function turnOnPush(){if(!osRef){alert("Push is still loading. Try again in a few seconds.");return}
+  let p;try{p=osRef.Notifications.requestPermission()}catch(e){}   /* must start inside the tap */
+  Promise.resolve(p).then(async()=>{
+   if(osRef.Notifications.permission){await osRef.login(uid());if(!osRef.User.PushSubscription.optedIn)osRef.User.PushSubscription.optIn();put("hs_push","on");
+    if(cur)setDoc(dref("status",me),{pushId:uid()},{merge:true}).catch(()=>{})}
+   refreshPush()}).catch(refreshPush)}
+ function turnOffPush(){try{osRef.User.PushSubscription.optOut()}catch(e){}put("hs_push","off");refreshPush()}
+ Promise.race([window.hsOS||Promise.resolve(null),new Promise(r=>setTimeout(()=>r(null),10000))]).then(o=>{osRef=o;if(!o)return;
+  try{o.Notifications.addEventListener("foregroundWillDisplay",e=>{if(document.visibilityState==="visible"){try{e.preventDefault()}catch(x){}}});
+   o.User.PushSubscription.addEventListener("change",()=>refreshPush())}catch(e){}
+  if(pushOn())o.login(uid()).catch(()=>{});refreshPush()});
+
+ const notifyAsk=(title,body)=>{if(pushOn())return;try{if(document.hidden&&"Notification" in window&&Notification.permission==="granted")new Notification(title,body?{body}:{})}catch(e){}};
 
  function start(){
-  wireFoot();renderChips();
+  wireFoot();refreshPush();renderChips();
   const commit=()=>{const st=norm(pending||mine.status||"free"),note=$("noteIn").value.trim();
    if(mine.admin&&chanColor!=="status:"+st)syncColor(st);
    const ch=st!==norm(mine.status||""),nc=note!==(mine.note||"");if(!ch&&!nc&&mine.status)return;
@@ -396,7 +434,7 @@ else{
    const note=$("noteIn").value.trim();pending="";
    if(mine.admin&&chanColor!=="status:off")syncColor("off");
    save({status:"off",note});post("is off for the day!");
-   setDoc(dref("knocks",rid("k")),{kind:"off",to:"all",toName:"everyone",from:me,fromName:name,at:Date.now(),status:"sent"}).catch(()=>{});
+   setDoc(dref("knocks",rid("k")),{kind:"off",to:"all",toName:"everyone",from:me,fromName:name,at:Date.now(),status:"sent"}).catch(()=>{});ping("off");
    renderChips();const b=$("offBtn");b.textContent="Sent ✓";setTimeout(()=>b.textContent="🌙 Off For Day!",2000)};
   $("offBtn").onclick=offForDay;
   $("noteIn").onkeydown=e=>{if(e.key==="Enter"){e.preventDefault();commit()}};
@@ -414,7 +452,7 @@ else{
     if(rejoin){rejoin=false;mine={};save({status:"free"})}
     else{const t=cur.title||house;chans=chans.filter(c=>c!==cur);saveChans();
      showChannels("You were removed from “"+t+"”. If that was a mistake, rejoin with its code.");return}
-   }else if(m){rejoin=false;mine=m.d;if(!$("noteIn").value&&mine.note)$("noteIn").value=mine.note;if(!mine.status)save({status:"free"})}
+   }else if(m){rejoin=false;mine=m.d;if(!$("noteIn").value&&mine.note)$("noteIn").value=mine.note;if(!mine.status)save({status:"free"});if(pushOn()&&m.d.pushId!==uid())setDoc(dref("status",me),{pushId:uid()},{merge:true}).catch(()=>{})}
    else if(!mine.status){save({status:"free"})}
    renderChips();renderList(lastDocs.slice());renderAdmin()},()=>{$("list").innerHTML='<div class="note">Couldn’t load. Check your Firebase security rules.</div>'}));
 
